@@ -1,16 +1,22 @@
+
 using UnityEngine;
 
 public class PlayerMovimiento : MonoBehaviour
 {
-    [Header("Referencia")]
+    [Header("Referencias")]
     [SerializeField] private Transform Camara;
+    [SerializeField] private Animator Animador;
+    [SerializeField] private Transform Modelo;
+
     private CharacterController Controlador;
     private bool EstaEnSuelo;
+    private bool EstaSaltando;
 
     [Header("Movimiento")]
-    [SerializeField] private bool UsarGetAxisRaw = true;
     [SerializeField] private float VelocidadMovimiento = 5f;
     [SerializeField] private float VelocidadCarrera = 8f;
+    [SerializeField] private float VelocidadRotacion = 12f;
+
     private float VelocidadActual;
 
     [Header("Salto")]
@@ -22,106 +28,134 @@ public class PlayerMovimiento : MonoBehaviour
 
     private void Awake()
     {
-        // Busca el CharacterController del jugador
         Controlador = GetComponent<CharacterController>();
 
-        // Obtiene la cámara principal si no se ha asignado
+        if (Animador == null)
+            Animador = GetComponentInChildren<Animator>();
+
+        if (Modelo == null && transform.childCount > 0)
+            Modelo = transform.GetChild(0);
+
         if (Camara == null && Camera.main != null)
-        {
             Camara = Camera.main.transform;
-        }
     }
 
     private void Update()
     {
-        // Guarda el estado del suelo antes de realizar movimientos
-        if (Controlador == null)
-        {
+        if (Controlador == null || Camara == null)
             return;
-        }
 
         EstaEnSuelo = Controlador.isGrounded;
 
-        MoverJugadorEnPlano();
+        MoverJugador();
         GestionarSalto();
         AplicarGravedad();
+        ActualizarAnimaciones();
     }
 
-    private void MoverJugadorEnPlano()
+    private void MoverJugador()
     {
-        // Recoge los eventos del WASD
-        float ValorHorizontal = UsarGetAxisRaw
-            ? Input.GetAxisRaw("Horizontal")
-            : Input.GetAxis("Horizontal");
+        float Horizontal = Input.GetAxisRaw("Horizontal");
+        float Vertical = Input.GetAxisRaw("Vertical");
 
-        float ValorVertical = UsarGetAxisRaw
-            ? Input.GetAxisRaw("Vertical")
-            : Input.GetAxis("Vertical");
+        Vector3 Adelante = Camara.forward;
+        Vector3 Derecha = Camara.right;
 
-        // Comprueba que existen los componentes necesarios
-        if (Controlador == null || Camara == null)
-        {
-            return;
-        }
+        Adelante.y = 0f;
+        Derecha.y = 0f;
 
-        // Obtiene las direcciones de la cámara
-        Vector3 adelanteCamara = Camara.forward;
-        Vector3 derechaCamara = Camara.right;
+        Adelante.Normalize();
+        Derecha.Normalize();
 
-        // Elimina la componente vertical
-        adelanteCamara.y = 0f;
-        derechaCamara.y = 0f;
+        Vector3 Direccion =
+            (Derecha * Horizontal) + (Adelante * Vertical);
 
-        // Normaliza las direcciones
-        adelanteCamara.Normalize();
-        derechaCamara.Normalize();
+        if (Direccion.sqrMagnitude > 1f)
+            Direccion.Normalize();
 
-        // Calcula la dirección del movimiento
-        Vector3 direccionPlano =
-            (derechaCamara * ValorHorizontal) +
-            (adelanteCamara * ValorVertical);
+        bool EstaMoviendose = Direccion.sqrMagnitude > 0.01f;
+        bool EstaCorriendo = Input.GetKey(KeyCode.LeftShift);
 
-        // Evita moverse más rápido en diagonal
-        if (direccionPlano.sqrMagnitude > 1f)
-        {
-            direccionPlano.Normalize();
-        }
-
-        // Comprueba si el jugador está corriendo
-        VelocidadActual = Input.GetKey(KeyCode.LeftShift)
+        VelocidadActual = EstaCorriendo
             ? VelocidadCarrera
             : VelocidadMovimiento;
 
-        // Calcula el desplazamiento horizontal
-        Vector3 desplazamientoXZ =
-            direccionPlano * VelocidadActual * Time.deltaTime;
+        Vector3 Desplazamiento =
+            Direccion * VelocidadActual * Time.deltaTime;
 
-        // Mueve al jugador
-        Controlador.Move(desplazamientoXZ);
+        Controlador.Move(Desplazamiento);
+
+        if (EstaMoviendose && Modelo != null)
+        {
+            Quaternion RotacionObjetivo =
+                Quaternion.LookRotation(Direccion);
+
+            Modelo.rotation = Quaternion.Slerp(
+                Modelo.rotation,
+                RotacionObjetivo,
+                VelocidadRotacion * Time.deltaTime
+            );
+        }
     }
 
     private void GestionarSalto()
     {
-        // Solo permite saltar si el jugador está en el suelo
         if (EstaEnSuelo && Input.GetKeyDown(KeyCode.Space))
         {
-            // Calcula la velocidad inicial del salto
-            VelocidadVertical.y = Mathf.Sqrt(FuerzaSalto * -2f * Gravedad);
+            VelocidadVertical.y =
+                Mathf.Sqrt(FuerzaSalto * -2f * Gravedad);
+
+            EstaSaltando = true;
         }
     }
 
+
     private void AplicarGravedad()
     {
-        // Mantiene al jugador pegado al suelo
+        bool EstabaEnSuelo = EstaEnSuelo;
+
+        VelocidadVertical.y += Gravedad * Time.deltaTime;
+
+        Controlador.Move(
+            VelocidadVertical * Time.deltaTime
+        );
+
+        EstaEnSuelo = Controlador.isGrounded;
+
         if (EstaEnSuelo && VelocidadVertical.y < 0)
         {
             VelocidadVertical.y = -2f;
+
+            if (EstaSaltando)
+            {
+                EstaSaltando = false;
+            }
+        }
+    }
+
+    private void ActualizarAnimaciones()
+    {
+        if (Animador == null)
+            return;
+
+        Animador.SetBool("Saltando", EstaSaltando);
+
+        float Horizontal = Input.GetAxisRaw("Horizontal");
+        float Vertical = Input.GetAxisRaw("Vertical");
+
+        bool EstaMoviendose =
+            Mathf.Abs(Horizontal) > 0.01f ||
+            Mathf.Abs(Vertical) > 0.01f;
+
+        bool EstaCorriendo = Input.GetKey(KeyCode.LeftShift);
+
+        float VelocidadAnimacion = 0f;
+
+        if (!EstaSaltando && EstaMoviendose)
+        {
+            VelocidadAnimacion = EstaCorriendo ? 1f : 0.5f;
         }
 
-        // Aplica la gravedad
-        VelocidadVertical.y += Gravedad * Time.deltaTime;
-
-        // Aplica el movimiento vertical
-        Controlador.Move(VelocidadVertical * Time.deltaTime);
+        Animador.SetFloat("Speed", VelocidadAnimacion);
     }
 }
